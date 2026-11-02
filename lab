@@ -1,0 +1,74 @@
+#!/bin/sh
+set -eu
+
+LAB_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$LAB_ROOT"
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 2
+}
+
+help() {
+    cat <<'HELP'
+Usage: ./lab <command> [arguments]
+
+  test [stage] [options]  Build and run Maelstrom (default: echo, 10 seconds)
+  serve [options]         Browse saved results (default: 127.0.0.1:8080)
+  help                    Show this help
+
+Stages: echo, unique-id, broadcast, g-counter, kafka, txn
+Options are passed to Maelstrom.
+
+Examples:
+  ./lab test echo --log-stderr
+  ./lab test broadcast --node-count 5 --time-limit 20
+  ./lab serve --port 8081
+HELP
+}
+
+find_maelstrom() {
+    if [ -n "${MAELSTROM_BIN:-}" ]; then
+        maelstrom=$(command -v "$MAELSTROM_BIN") || fail 'MAELSTROM_BIN was not found.'
+    elif command -v maelstrom >/dev/null 2>&1; then
+        maelstrom=$(command -v maelstrom)
+    else
+        maelstrom="$HOME/tools/maelstrom-0.2.4/maelstrom"
+    fi
+    [ -x "$maelstrom" ] || fail 'Install Maelstrom or set MAELSTROM_BIN to its executable path.'
+}
+
+command=${1:-help}
+if [ "$#" -gt 0 ]; then shift; fi
+case "$command" in
+    help|-h|--help)
+        help
+        ;;
+    test)
+        case "${1:-}" in
+            -h|--help) help; exit 0 ;;
+            ''|-*) stage=echo ;;
+            *) stage=$1; shift ;;
+        esac
+        case "$stage" in
+            echo) workload=echo; nodes=1 ;;
+            unique-id) workload=unique-ids; nodes=3 ;;
+            broadcast) workload=broadcast; nodes=3 ;;
+            g-counter) workload=g-counter; nodes=3 ;;
+            kafka) workload=kafka; nodes=3 ;;
+            txn) workload=txn-rw-register; nodes=3 ;;
+            *) fail "Unknown stage: $stage" ;;
+        esac
+        find_maelstrom
+        ./gradlew --console=plain installDist </dev/null >&2
+        export GOSSIP_GLOMERS_CHALLENGE="$stage"
+        exec "$maelstrom" test -w "$workload" \
+            --bin "$LAB_ROOT/build/install/gossip-glomers-kotlin/bin/gossip-glomers-kotlin" \
+            --node-count "$nodes" --time-limit 10 "$@"
+        ;;
+    serve)
+        find_maelstrom
+        exec "$maelstrom" serve --host 127.0.0.1 --port 8080 "$@"
+        ;;
+    *) fail "Unknown command: $command. Use ./lab help" ;;
+esac
