@@ -32,3 +32,13 @@ data class InitBody(
 data class InitOkBody(
     val type: String = "init_ok",
 )
+
+@Serializable
+data class TopologyBody(
+    val topology: Map<String, List<String>>,
+)
+
+@Serializable
+data class TopologyOkBody(
+    val type: String = "topology_ok",
+)

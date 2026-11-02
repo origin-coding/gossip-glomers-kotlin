@@ -19,6 +19,7 @@ class Runtime {
     fun on(type: String, handler: Handler) {
         check(!started) { "Register handlers before run()" }
         require(type != "init") { "init is handled by Runtime" }
+        require(type != "topology") { "topology is handled by Runtime" }
         require(type !in handlers) { "Handler already registered: $type" }
         handlers[type] = handler
     }
@@ -43,25 +44,47 @@ class Runtime {
 
             if (message.type == "init") {
                 check(node == null) { "Node has already been initialized" }
-                val init = json.decodeFromJsonElement<InitBody>(message.body)
-                val initializedNode = NodeContext(
-                    nodeId = init.nodeId,
-                    nodeIds = init.nodeIds,
-                    json = json,
-                    write = ::write,
-                )
-                node = initializedNode
-                initializedNode.reply(message, InitOkBody())
-            } else {
-                val initializedNode = checkNotNull(node) {
-                    "Received ${message.type} before init"
-                }
-                dispatch(initializedNode, message)
+                node = handleInit(message, ::write)
+                continue
             }
+
+            val initializedNode = checkNotNull(node) {
+                "Received ${message.type} before init"
+            }
+            dispatch(initializedNode, message)
         }
     }
 
+    private fun handleInit(
+        message: Message<JsonObject>,
+        write: (Message<JsonObject>) -> Unit,
+    ): NodeContext {
+        val init = json.decodeFromJsonElement<InitBody>(message.body)
+        val node = NodeContext(
+            nodeId = init.nodeId,
+            nodeIds = init.nodeIds,
+            json = json,
+            write = write,
+        )
+        node.reply(message, InitOkBody())
+        return node
+    }
+
+    private fun handleTopology(node: NodeContext, message: Message<JsonObject>) {
+        val topology = node.decode<TopologyBody>(message)
+        val neighbors = requireNotNull(topology.topology[node.nodeId]) {
+            "Topology does not contain node ${node.nodeId}"
+        }
+        node.updateNeighbors(neighbors)
+        node.reply(message, TopologyOkBody())
+    }
+
     private fun dispatch(node: NodeContext, message: Message<JsonObject>) {
+        if (message.type == "topology") {
+            handleTopology(node, message)
+            return
+        }
+
         val handler = handlers[message.type]
             ?: error("No handler registered for: ${message.type}")
         handler(node, message)
