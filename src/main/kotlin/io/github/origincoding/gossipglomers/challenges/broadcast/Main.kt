@@ -7,7 +7,6 @@ import io.github.origincoding.gossipglomers.runtime.inReplyTo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlin.math.pow
-import kotlin.system.exitProcess
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -30,18 +29,30 @@ data class ReadOkBody(
     val type: String = "read_ok",
 )
 
-data class DeliveryKey(val neighbor: String, val message: Long)
+@Serializable
+data class GossipBody(
+    val messages: Set<Long>,
+    val type: String = "gossip"
+)
 
-data class PendingDelivery(
-    var nextRetryAt: Instant = Clock.System.now(),
-    var attemptCount: Long = 1,
-    val requestIds: MutableSet<Long> = mutableSetOf<Long>()
+@Serializable
+data class GossipOkBody(
+    val type: String = "gossip_ok"
+)
+
+data class OutgoingBuffer(
+    val messages: MutableSet<Long> = mutableSetOf(),
+    val flushAt: Instant = Clock.System.now() + 100.milliseconds
+)
+
+data class PendingBatch(
+    val neighbor: String,
+    val messages: Set<Long>,
+    val requestIds: MutableSet<Long> = mutableSetOf(),
+    var attemptCount: Long = 0,
+    var nextRetryAt: Instant = Clock.System.now() + 250.milliseconds,
 ) {
-    init {
-        this.nextRetryAt += 250.milliseconds
-    }
-
-    fun decay(duration: Duration = 250.milliseconds) {
+    fun scheduleNextRetry(duration: Duration = 250.milliseconds) {
         val expDecay = 2.0.pow(attemptCount.toDouble()) * duration.inWholeMilliseconds.toDouble()
         val maxDecay = 3000.toDouble()
 
@@ -53,14 +64,17 @@ data class PendingDelivery(
 class BroadcastNode {
     private val messages = mutableSetOf<Long>()
 
-    // 用来存储、查找广播信息
-    private val pendingDeliveries = mutableMapOf<DeliveryKey, PendingDelivery>()
-    private val requestIndex = mutableMapOf<Long, DeliveryKey>()
+    private var nextBatchId: Long = 0L
+    private val outboxByNeighbor = mutableMapOf<String, OutgoingBuffer>()
+    private val pendingBatches = mutableMapOf<Long, PendingBatch>()
+    private val batchIdByRequestId = mutableMapOf<Long, Long>()
 
     fun register(runtime: Runtime) {
         runtime.on("broadcast", ::onBroadcast)
         runtime.on("read", ::onRead)
         runtime.on("broadcast_ok", ::onBroadcastOk)
+        runtime.on("gossip", ::onGossip)
+        runtime.on("gossip_ok", ::onGossipOk)
         runtime.onTick(::onTick)
     }
 
@@ -69,45 +83,74 @@ class BroadcastNode {
         request: Message<JsonObject>,
     ) {
         val message = node.decode<BroadcastBody>(request).message
-        val added = messages.add(message)
-        if (added) {
-            node.neighbors.filter { it != request.src }.forEach { neighbor ->
-                val requestId = node.send(neighbor, BroadcastBody(message))
+        acceptValue(node, message, request.src)
+        node.reply(request, BroadcastOkBody())
+    }
 
-                val key = DeliveryKey(neighbor, message)
-                val value = PendingDelivery(requestIds = mutableSetOf(requestId))
-                pendingDeliveries[key] = value
-                requestIndex[requestId] = key
-            }
+    private fun onGossip(node: NodeContext, request: Message<JsonObject>) {
+        val messages = node.decode<GossipBody>(request).messages
+        messages.forEach { message -> acceptValue(node, message, request.src) }
+        node.reply(request, GossipOkBody())
+    }
+
+    private fun acceptValue(node: NodeContext, message: Long, source: String) {
+        if (!messages.add(message)) {
+            return
         }
 
-        node.reply(request, BroadcastOkBody())
+        node.neighbors.filter { it != source }.forEach { neighbor ->
+            outboxByNeighbor.getOrPut(neighbor) { OutgoingBuffer() }.also { it.messages.add(message) }
+        }
     }
 
     private fun onBroadcastOk(
         node: NodeContext,
         request: Message<JsonObject>
     ) {
-        val inReplyTo = request.inReplyTo
-        val deliveryKey = requestIndex[inReplyTo] ?: return
-        val pendingDelivery = pendingDeliveries[deliveryKey] ?: return
-
-        pendingDelivery.requestIds.forEach { requestIndex.remove(it) }
-        pendingDeliveries.remove(deliveryKey)
-
         val body = node.decode<BroadcastOkBody>(request)
     }
 
-    private fun onTick(node: NodeContext) = pendingDeliveries
-        .filterValues { it.nextRetryAt <= Clock.System.now() }
-        .forEach { (key, value) ->
-            value.decay()
-            // 这里先省略指数退后策略、超时判定等代码。
-            val requestId = node.send(key.neighbor, BroadcastBody(key.message))
-            value.requestIds.add(requestId)
-            requestIndex[requestId] = key
+    private fun onTick(node: NodeContext) {
+        flushDueOutboxes(node)
+        retryDueBatches(node)
+    }
+
+    private fun flushDueOutboxes(node: NodeContext) = outboxByNeighbor
+        .filterValues { it.flushAt <= Clock.System.now() }
+        .forEach { (neighbor, value) ->
+            val batchId = this.nextBatchId++
+            val pendingBatch = PendingBatch(neighbor, value.messages.toSet()).also { pendingBatches[batchId] = it }
+            sendBatchAttempt(node, batchId, pendingBatch)
+            outboxByNeighbor.remove(neighbor)
         }
 
+    private fun retryDueBatches(node: NodeContext) {
+        val now = Clock.System.now()
+        pendingBatches.filterValues { it.nextRetryAt < now }.forEach { (batchId, pendingBatch) ->
+            sendBatchAttempt(node, batchId, pendingBatch)
+        }
+    }
+
+    private fun sendBatchAttempt(node: NodeContext, batchId: Long, pendingBatch: PendingBatch) {
+        val requestId = node.send(pendingBatch.neighbor, GossipBody(pendingBatch.messages))
+
+        pendingBatch.requestIds.add(requestId)
+        pendingBatch.scheduleNextRetry()
+        batchIdByRequestId[requestId] = batchId
+    }
+
+    private fun onGossipOk(node: NodeContext, request: Message<JsonObject>) {
+        val inReplyTo = request.inReplyTo
+        val batchId = batchIdByRequestId[inReplyTo] ?: return
+        val pendingBatch = pendingBatches[batchId] ?: return
+
+        if (pendingBatch.neighbor != request.src) {
+            return
+        }
+
+        pendingBatch.requestIds.forEach { id -> batchIdByRequestId.remove(id) }
+        pendingBatches.remove(batchId)
+    }
 
     private fun onRead(
         node: NodeContext,
@@ -119,8 +162,7 @@ class BroadcastNode {
 
 /** Stage 03: Broadcast. Implement the node here. */
 fun run(): Unit {
-    val runtime = Runtime()
-    val broadcastNode = BroadcastNode()
-    broadcastNode.register(runtime)
+    val runtime = Runtime(tickMillis = 25)
+    val broadcastNode = BroadcastNode().apply { register(runtime) }
     runtime.run()
 }
