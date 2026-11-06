@@ -28,38 +28,41 @@ class NodeContext(
     inline fun <reified T> decode(message: Message<JsonObject>): T =
         json.decodeFromJsonElement(message.body)
 
-    inline fun <reified T> send(dest: String, body: T) {
+    /** 返回本次发送的 msg_id；正常返回不代表对端已经收到。 */
+    inline fun <reified T> send(dest: String, body: T): Long =
         send(dest, json.encodeToJsonElement(body).jsonObject)
-    }
 
-    fun send(dest: String, body: JsonObject) {
+    fun send(dest: String, body: JsonObject): Long {
+        val requestId = nextMessageId++
         val fields = body.toMutableMap()
-        fields["msg_id"] = JsonPrimitive(nextMessageId++)
+        fields["msg_id"] = JsonPrimitive(requestId)
         write(Message(src = nodeId, dest = dest, body = JsonObject(fields)))
+        return requestId
     }
 
-    inline fun <reified T> reply(request: Message<JsonObject>, body: T) {
+    /** 返回回复自身的 msg_id，原请求编号仍放在 in_reply_to 中。 */
+    inline fun <reified T> reply(request: Message<JsonObject>, body: T): Long =
         reply(request, json.encodeToJsonElement(body).jsonObject)
-    }
 
-    fun reply(request: Message<JsonObject>, body: JsonObject) {
+    fun reply(request: Message<JsonObject>, body: JsonObject): Long {
         val requestId = requireNotNull(request.msgId) {
             "Cannot reply to a message without msg_id"
         }
         val fields = body.toMutableMap()
         fields["in_reply_to"] = JsonPrimitive(requestId)
-        send(request.src, JsonObject(fields))
+        return send(request.src, JsonObject(fields))
     }
 
-    inline fun <reified T> sendToNeighbors(body: T, excluding: Set<String> = emptySet()) {
+    /** 按实际发送顺序返回 msg_id；没有发送目标时返回空列表。 */
+    inline fun <reified T> sendToNeighbors(body: T, excluding: Set<String> = emptySet()): List<Long> =
         sendToNeighbors(json.encodeToJsonElement(body).jsonObject, excluding)
-    }
 
-    fun sendToNeighbors(body: JsonObject, excluding: Set<String> = emptySet()) {
-        for (neighbor in neighbors) {
-            if (neighbor !in excluding) {
-                send(neighbor, body)
+    fun sendToNeighbors(body: JsonObject, excluding: Set<String> = emptySet()): List<Long> =
+        buildList {
+            for (neighbor in neighbors) {
+                if (neighbor !in excluding) {
+                    add(send(neighbor, body))
+                }
             }
         }
-    }
 }
