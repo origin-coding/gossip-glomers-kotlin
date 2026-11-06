@@ -172,11 +172,25 @@ class Runtime(private val tickMillis: Long = 250) {
 
     private fun handleTopology(node: NodeContext, message: Message<JsonObject>) {
         val topology = node.decode<TopologyBody>(message)
+        initStarTopology(node)
+        node.reply(message, TopologyOkBody())
+    }
+
+    private fun initDefaultTopology(node: NodeContext, topology: TopologyBody) {
         val neighbors = requireNotNull(topology.topology[node.nodeId]) {
             "Topology does not contain node ${node.nodeId}"
         }
         node.updateNeighbors(neighbors)
-        node.reply(message, TopologyOkBody())
+    }
+
+    private fun initStarTopology(node: NodeContext) {
+        val centerNodeId = node.nodeIds.first()
+        val neighbors = if (node.nodeId == centerNodeId) {
+            node.nodeIds - centerNodeId
+        } else {
+            listOf(centerNodeId)
+        }
+        node.updateNeighbors(neighbors)
     }
 
     private fun dispatch(node: NodeContext, message: Message<JsonObject>) {

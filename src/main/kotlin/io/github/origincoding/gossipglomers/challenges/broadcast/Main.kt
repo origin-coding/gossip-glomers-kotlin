@@ -71,7 +71,7 @@ class BroadcastNode {
         val message = node.decode<BroadcastBody>(request).message
         val added = messages.add(message)
         if (added) {
-            node.neighbors.forEach { neighbor ->
+            node.neighbors.filter { it != request.src }.forEach { neighbor ->
                 val requestId = node.send(neighbor, BroadcastBody(message))
 
                 val key = DeliveryKey(neighbor, message)
