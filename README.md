@@ -1,7 +1,7 @@
 # Gossip Glomers · Kotlin
 
 使用 Kotlin/JVM 完成 [Gossip Glomers](https://fly.io/dist-sys/) 分布式系统实验。
-Echo 已通过 Maelstrom 测试，其余实验待实现。
+已实现 Echo、Unique ID 和 Broadcast；Grow-Only Counter、Kafka 和事务实验待实现。
 
 ## 使用
 
@@ -14,3 +14,5 @@ Echo 已通过 Maelstrom 测试，其余实验待实现。
 
 实验代码位于 `src/main/kotlin/io/github/origincoding/gossipglomers/challenges/`。
 命令说明见 [docs/commands.md](docs/commands.md)。
+
+基础设施及业务代码写法见 [docs/runtime.md](docs/runtime.md)。
