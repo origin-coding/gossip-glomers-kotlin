@@ -1,7 +1,7 @@
 # Gossip Glomers · Kotlin
 
 使用 Kotlin/JVM 完成 [Gossip Glomers](https://fly.io/dist-sys/) 分布式系统实验。
-已实现 Echo、Unique ID 和 Broadcast；Grow-Only Counter、Kafka 和事务实验待实现。
+已实现 Echo、Unique ID、Broadcast 和 Grow-Only Counter；Kafka 和事务实验待实现。
 
 ## 使用
 

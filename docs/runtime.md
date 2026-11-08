@@ -65,15 +65,19 @@ RPC 注册等待记录后发送请求，按 `in_reply_to`、来源和预期响�
 ```kotlin
 import io.github.origincoding.gossipglomers.clients.kv.kv
 import io.github.origincoding.gossipglomers.clients.kv.readAs
+import io.github.origincoding.gossipglomers.clients.kv.readAsOrDefault
 import io.github.origincoding.gossipglomers.clients.kv.writeAs
 import io.github.origincoding.gossipglomers.clients.kv.compareAndSwapAs
 
 val store = kv() // seq-kv；也可以显式传入 lin-kv 等服务地址
 val state = store.readAs<MyState>("state")
+val count = store.readAsOrDefault("counter", 0L)
 store.writeAs("state", state)
 store.compareAndSwapAs("state", state, updated, createIfNotExists = true)
 ```
 
 `MyState` 需要可序列化。原始接口 `read/write/compareAndSwap` 使用 `JsonElement`，
-另提供 `readLong`。泛型方法只负责编解码，key 不存在时不会自动返回 0，CAS 冲突和超时也不会
-自动重试。key 设计、去重、初始化、持久化与一致性由实验负责。gcounter 仍保留未实现入口。
+另提供 `readLong`。`readAs` 保留严格读取语义；`readAsOrDefault(key, defaultValue)` 仅在
+key 不存在（错误码 20）时返回调用者指定的默认值，不创建 key，不替换已有的 null，其他错误、
+超时、取消和解码失败正常传播。CAS 冲突和超时不会自动重试。key 设计、去重、初始化、持久化
+与一致性由实验负责。
