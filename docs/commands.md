@@ -12,6 +12,12 @@
 默认测试 10 秒，Echo 使用 1 个节点，其余使用 3 个节点；追加参数直接传给 Maelstrom。
 这些默认值用于快速验证，完整验收参数按各实验题目设置。
 
+Kafka 当前完成到 5a，只支持单节点；验收时显式指定节点数：
+
+```sh
+./lab test kafka --node-count 1 --concurrency 2n --time-limit 20 --rate 1000
+```
+
 ## 广播拓扑
 
 Topology 只属于 Broadcast。未设置时使用星形拓扑，沿用之前的广播策略。

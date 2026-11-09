@@ -1,9 +1,7 @@
 package io.github.origincoding.gossipglomers.challenges.kafka
 
-import kotlin.system.exitProcess
+import io.github.origincoding.gossipglomers.runtime.Runtime
 
-/** Stage 05: Kafka-Style Log. Implement the node here. */
-fun run(): Unit {
-    System.err.println("Stage 05 (kafka) is not implemented yet.")
-    exitProcess(2)
+fun run() {
+    Runtime().run { KafkaNode(this).register() }
 }
