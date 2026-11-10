@@ -9,11 +9,19 @@ import io.github.origincoding.gossipglomers.runtime.ErrorCode
 import io.github.origincoding.gossipglomers.runtime.Node
 import io.github.origincoding.gossipglomers.runtime.Request
 import io.github.origincoding.gossipglomers.runtime.RpcException
+import io.github.origincoding.gossipglomers.runtime.RpcTimeoutException
+import io.github.origincoding.gossipglomers.runtime.every
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.consume
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlin.time.Duration.Companion.microseconds
 
 @Serializable
 data class SendBody(val key: String, val msg: Long)
@@ -37,16 +45,36 @@ data class ListCommittedOffsetsBody(val keys: List<String>)
 @Serializable
 data class ListCommittedOffsetsOkBody(val offsets: Map<String, Long>)
 
+// 批量请求 Send
+
+data class PendingSend(val msg: Long, val result: CompletableDeferred<Long>)
+
 /** 5b：基于 lin-kv 的共享日志，列表下标即消息的 offset。 */
 class KafkaNode(private val node: Node) {
-    private val store = node.kv("lin-kv")
+    private val nodes = node.nodeIds.sorted()
 
+    private val keyMutexes = mutableMapOf<String, Mutex>()
+
+    private val outbox = mutableMapOf<String, Channel<PendingSend>>()
+
+    private val store = node.kv("lin-kv")
     private val String.logKey get() = "logs-${this}"
     private val String.committedOffsetKey get() = "committed-offsets-${this}"
 
     fun register() {
         node.on<SendBody, SendOkBody>("send") { request ->
-            SendOkBody(acceptMessage(store, request))
+            val owner = ownerOf(request.body.key)
+
+            if (owner == node.id) {
+                SendOkBody(enqueueMessage(request.body))
+            } else {
+                val result = node.rpc<SendBody, SendOkBody>(owner, "forward", request.body)
+                SendOkBody(result.offset)
+            }
+        }
+
+        node.on<SendBody, SendOkBody>("forward") { request ->
+            SendOkBody(enqueueMessage(request.body))
         }
 
         node.on<PollBody, PollOkBody>("poll") { request ->
@@ -75,17 +103,62 @@ class KafkaNode(private val node: Node) {
         }
     }
 
-    private suspend fun acceptMessage(store: KvClient, request: Request<SendBody>): Long {
-        val storageKey = request.body.key.logKey
+    private suspend fun enqueueMessage(body: SendBody): Long {
+        val result = CompletableDeferred<Long>()
+        queueFor(body.key).send(PendingSend(body.msg, result))
+        return result.await()
+    }
+
+    private fun queueFor(key: String): Channel<PendingSend> = outbox.getOrPut(key) {
+        val channel = Channel<PendingSend>(64)
+        node.background { consumeMessages(key, channel) }
+        channel
+    }
+
+    private suspend fun consumeMessages(key: String, channel: Channel<PendingSend>) {
+        while (true) {
+            // 队列为空时，在这里挂起等待。
+            val first = channel.receive()
+            val batch = mutableListOf(first)
+
+            // 取走当前已有的消息，不主动等待。
+            while (batch.size < 64) {
+                val next = channel.tryReceive().getOrNull() ?: break
+                batch.add(next)
+            }
+
+            try {
+                val baseOffset = appendBatch(key, batch.map { it.msg })
+
+                batch.forEachIndexed { index, pending ->
+                    pending.result.complete(baseOffset + index.toLong())
+                }
+            } catch (e: RpcException) {
+                batch.forEach {
+                    it.result.completeExceptionally(e)
+                }
+            } catch (e: RpcTimeoutException) {
+                batch.forEach {
+                    it.result.completeExceptionally(e)
+                }
+            }
+        }
+    }
+
+    private suspend fun appendBatch(key: String, messages: List<Long>): Long {
+        val storageKey = key.logKey
 
         while (true) {
             val before = store.readAsOrDefault<List<Long>>(storageKey, emptyList())
-            val after = before + request.body.msg
+            val after = before + messages
+
             try {
                 store.compareAndSwapAs(storageKey, before, after, createIfNotExists = true)
                 return before.size.toLong()
             } catch (e: RpcException) {
-                if (e.code != ErrorCode.PRECONDITION_FAILED) throw e
+                if (e.code != ErrorCode.PRECONDITION_FAILED) {
+                    throw e
+                }
             }
         }
     }
@@ -118,5 +191,10 @@ class KafkaNode(private val node: Node) {
                 null
             }
         }
+    }
+
+    private fun ownerOf(key: String): String {
+        val index = Math.floorMod(key.hashCode(), nodes.size)
+        return nodes[index]
     }
 }
