@@ -1,7 +1,7 @@
 # Gossip Glomers · Kotlin
 
 使用 Kotlin/JVM 完成 [Gossip Glomers](https://fly.io/dist-sys/) 分布式系统实验。
-已实现 Echo、Unique ID、Broadcast、Grow-Only Counter 和单节点 Kafka（5a）；Kafka 5b/5c 和事务实验待实现。
+已实现 Echo、Unique ID、Broadcast、Grow-Only Counter 和多节点 Kafka（5b）；Kafka 5c 性能优化进行中，事务实验待实现。
 
 ## 使用
 

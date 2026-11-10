@@ -1,7 +1,18 @@
 package io.github.origincoding.gossipglomers.challenges.kafka
 
+import io.github.origincoding.gossipglomers.clients.kv.KvClient
+import io.github.origincoding.gossipglomers.clients.kv.compareAndSwapAs
+import io.github.origincoding.gossipglomers.clients.kv.kv
+import io.github.origincoding.gossipglomers.clients.kv.readAsOrDefault
 import io.github.origincoding.gossipglomers.runtime.EmptyBody
+import io.github.origincoding.gossipglomers.runtime.ErrorCode
 import io.github.origincoding.gossipglomers.runtime.Node
+import io.github.origincoding.gossipglomers.runtime.Request
+import io.github.origincoding.gossipglomers.runtime.RpcException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -26,37 +37,86 @@ data class ListCommittedOffsetsBody(val keys: List<String>)
 @Serializable
 data class ListCommittedOffsetsOkBody(val offsets: Map<String, Long>)
 
-/** 5a：单节点内存日志，列表下标即消息的 offset。 */
+/** 5b：基于 lin-kv 的共享日志，列表下标即消息的 offset。 */
 class KafkaNode(private val node: Node) {
-    private val logs = mutableMapOf<String, MutableList<Long>>()
-    private val committedOffsets = mutableMapOf<String, Long>()
+    private val store = node.kv("lin-kv")
+
+    private val String.logKey get() = "logs-${this}"
+    private val String.committedOffsetKey get() = "committed-offsets-${this}"
 
     fun register() {
         node.on<SendBody, SendOkBody>("send") { request ->
-            val log = logs.getOrPut(request.body.key) { mutableListOf() }
-            log.addLast(request.body.msg)
-            SendOkBody(log.lastIndex.toLong())
+            SendOkBody(acceptMessage(store, request))
         }
 
         node.on<PollBody, PollOkBody>("poll") { request ->
-            val messages = request.body.offsets.mapValues { (key, offset) ->
-                logs[key].orEmpty().mapIndexedNotNull { index, msg ->
-                    if (index.toLong() >= offset) listOf(index.toLong(), msg) else null
-                }
-            }
+            val messages = coroutineScope {
+                request.body.offsets.map { (key, offset) -> async { key to readMessages(key, offset) } }
+            }.awaitAll().toMap()
             PollOkBody(messages)
         }
 
         node.on<CommitOffsetsBody, EmptyBody>("commit_offsets") { request ->
-            committedOffsets.putAll(request.body.offsets)
+            coroutineScope {
+                request.body.offsets.forEach { (key, offset) -> launch { commitOffset(store, key, offset) } }
+            }
             EmptyBody
         }
 
         node.on<ListCommittedOffsetsBody, ListCommittedOffsetsOkBody>("list_committed_offsets") { request ->
-            val offsets = request.body.keys.mapNotNull { key ->
-                committedOffsets[key]?.let { offset -> key to offset }
-            }.toMap()
+            val offsets = coroutineScope {
+                request.body.keys.map { key ->
+                    async {
+                        store.readAsOrDefault<Long?>(key.committedOffsetKey, null)?.let { offset -> key to offset }
+                    }
+                }
+            }.awaitAll().filterNotNull().toMap()
             ListCommittedOffsetsOkBody(offsets)
+        }
+    }
+
+    private suspend fun acceptMessage(store: KvClient, request: Request<SendBody>): Long {
+        val storageKey = request.body.key.logKey
+
+        while (true) {
+            val before = store.readAsOrDefault<List<Long>>(storageKey, emptyList())
+            val after = before + request.body.msg
+            try {
+                store.compareAndSwapAs(storageKey, before, after, createIfNotExists = true)
+                return before.size.toLong()
+            } catch (e: RpcException) {
+                if (e.code != ErrorCode.PRECONDITION_FAILED) throw e
+            }
+        }
+    }
+
+    private suspend fun commitOffset(store: KvClient, key: String, offset: Long) {
+        val storageKey = key.committedOffsetKey
+
+        while (true) {
+            val before = store.readAsOrDefault<Long?>(storageKey, null)
+            if (before != null && before >= offset) {
+                return
+            }
+
+            try {
+                store.compareAndSwapAs<Long?>(storageKey, before, offset, createIfNotExists = true)
+                return
+            } catch (e: RpcException) {
+                if (e.code != ErrorCode.PRECONDITION_FAILED) throw e
+            }
+        }
+    }
+
+    private suspend fun readMessages(key: String, offset: Long): List<List<Long>> {
+        val log = store.readAsOrDefault<List<Long>>(key.logKey, emptyList())
+
+        return log.mapIndexedNotNull { index, msg ->
+            if (index.toLong() >= offset) {
+                listOf(index.toLong(), msg)
+            } else {
+                null
+            }
         }
     }
 }
