@@ -7,21 +7,17 @@ import io.github.origincoding.gossipglomers.clients.kv.readAsOrDefault
 import io.github.origincoding.gossipglomers.runtime.EmptyBody
 import io.github.origincoding.gossipglomers.runtime.ErrorCode
 import io.github.origincoding.gossipglomers.runtime.Node
-import io.github.origincoding.gossipglomers.runtime.Request
 import io.github.origincoding.gossipglomers.runtime.RpcException
 import io.github.origincoding.gossipglomers.runtime.RpcTimeoutException
-import io.github.origincoding.gossipglomers.runtime.every
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.consume
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
-import kotlin.time.Duration.Companion.microseconds
 
 @Serializable
 data class SendBody(val key: String, val msg: Long)
@@ -45,12 +41,11 @@ data class ListCommittedOffsetsBody(val keys: List<String>)
 @Serializable
 data class ListCommittedOffsetsOkBody(val offsets: Map<String, Long>)
 
-// 批量请求 Send
+// 仅用于节点内排队，不参与 RPC 序列化。
+private data class PendingSend(val msg: Long, val result: CompletableDeferred<Long>)
 
-data class PendingSend(val msg: Long, val result: CompletableDeferred<Long>)
-
-/** 5b：基于 lin-kv 的共享日志，列表下标即消息的 offset。 */
-class KafkaNode(private val node: Node) {
+/** 三种写入策略共用 lin-kv 日志，列表下标即消息的 offset。 */
+class KafkaNode(private val node: Node, private val mode: KafkaMode = KafkaMode.BATCH) {
     private val nodes = node.nodeIds.sorted()
 
     private val keyMutexes = mutableMapOf<String, Mutex>()
@@ -63,18 +58,17 @@ class KafkaNode(private val node: Node) {
 
     fun register() {
         node.on<SendBody, SendOkBody>("send") { request ->
-            val owner = ownerOf(request.body.key)
+            val owner = if (mode == KafkaMode.DIRECT) node.id else ownerOf(request.body.key)
 
             if (owner == node.id) {
-                SendOkBody(enqueueMessage(request.body))
+                SendOkBody(acceptLocalMessage(request.body))
             } else {
-                val result = node.rpc<SendBody, SendOkBody>(owner, "forward", request.body)
-                SendOkBody(result.offset)
+                node.rpc<SendBody, SendOkBody>(owner, "forward", request.body)
             }
         }
 
         node.on<SendBody, SendOkBody>("forward") { request ->
-            SendOkBody(enqueueMessage(request.body))
+            SendOkBody(acceptLocalMessage(request.body))
         }
 
         node.on<PollBody, PollOkBody>("poll") { request ->
@@ -101,6 +95,14 @@ class KafkaNode(private val node: Node) {
             }.awaitAll().filterNotNull().toMap()
             ListCommittedOffsetsOkBody(offsets)
         }
+    }
+
+    private suspend fun acceptLocalMessage(body: SendBody): Long = when (mode) {
+        KafkaMode.DIRECT -> appendBatch(body.key, listOf(body.msg))
+        KafkaMode.HASH -> keyMutexes.getOrPut(body.key) { Mutex() }.withLock {
+            appendBatch(body.key, listOf(body.msg))
+        }
+        KafkaMode.BATCH -> enqueueMessage(body)
     }
 
     private suspend fun enqueueMessage(body: SendBody): Long {

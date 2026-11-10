@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+maelstrom_jar=${MAELSTROM_JAR:-"$HOME/tools/maelstrom-0.2.4/lib/maelstrom.jar"}
+
+if [ ! -f "$maelstrom_jar" ]; then
+    printf 'Maelstrom jar not found: %s\nSet MAELSTROM_JAR to its absolute path.\n' "$maelstrom_jar" >&2
+    exit 2
+fi
+
+# 只设置 Maelstrom 主进程的堆上限，不向业务节点注入 JVM 内存参数。
+exec java -Xmx16g -Djava.awt.headless=true -cp "$maelstrom_jar" \
+    clojure.main "$script_dir/maelstrom-bench.clj" "$@"

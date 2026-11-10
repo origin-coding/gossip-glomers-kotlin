@@ -7,3 +7,6 @@
 /gradlew.bat text eol=crlf
 *.jar binary
 /lab text eol=lf
+/scripts/kafka-bench text eol=lf
+/scripts/maelstrom-bench text eol=lf
+*.clj text eol=lf

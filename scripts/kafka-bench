@@ -1,0 +1,109 @@
+#!/bin/sh
+set -eu
+
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+usage() {
+    cat <<'HELP'
+Usage: ./scripts/kafka-bench run-all
+       ./scripts/kafka-bench --help
+
+WARNING: Run the benchmark matrix at most ONCE. Do not repeat it in a loop
+or run it in multiple terminals. One round = 10 cases x 3 modes = 30 tests.
+
+Each test uses a 5-second workload. Maelstrom has a 16 GiB heap limit;
+auxiliary Kafka plots are skipped, and all correctness checks stay enabled.
+
+Logs and index: store/kafka-bench-low/
+A persistent start marker prevents another round, even after interruption
+or reconnecting to WSL. This command does not resume or retry a failed run.
+HELP
+}
+
+case "${1:---help}" in
+    --help|-h) usage; exit 0 ;;
+    run-all) [ "$#" -eq 1 ] || { usage >&2; exit 2; } ;;
+    *) usage >&2; exit 2 ;;
+esac
+
+cd "$project_root"
+runner="$project_root/scripts/maelstrom-bench"
+store_dir="$project_root/store"
+log_dir="$store_dir/kafka-bench-low"
+marker="$store_dir/.kafka-bench-started"
+
+command -v flock >/dev/null 2>&1 || { printf 'flock is required.\n' >&2; exit 2; }
+[ -x "$runner" ] || { printf 'Benchmark launcher is not executable: %s\n' "$runner" >&2; exit 2; }
+mkdir -p "$store_dir"
+exec 9>"$store_dir/.kafka-bench.lock"
+flock -n 9 || { printf 'A benchmark is already running. Do not run a second round.\n' >&2; exit 1; }
+
+if [ -e "$marker" ]; then
+    printf 'Refusing another round: %s exists.\nA completed, failed, or interrupted benchmark must not be repeated automatically.\n' "$marker" >&2
+    exit 1
+fi
+
+printf 'WARNING: one round only (30 tests). No repeats, parallel runs, or automatic retries.\n'
+printf 'started=%s\npid=%s\n' "$(date -Iseconds)" "$$" >"$marker"
+run_status=interrupted-or-failed
+trap 'printf "status=%s\n" "$run_status" >>"$marker"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -p "$log_dir"
+index="$log_dir/index.tsv"
+printf 'case\tmode\tnodes\tconcurrency\trate\tlatency_ms\tmax_writes_per_key\tseconds\texit_code\tresult_dir\tlog_file\n' >"$index"
+
+run_case() {
+    case_id=$1
+    nodes=$2
+    concurrency=$3
+    rate=$4
+    latency=$5
+    writes=$6
+
+    for mode in direct hash batch; do
+        log_file="$log_dir/${case_id}-${mode}-$(date +%Y%m%dT%H%M%S).log"
+        previous_result=$(readlink -e "$store_dir/kafka/latest" 2>/dev/null || true)
+        printf 'START %s/%s: nodes=%s concurrency=%s rate=%s latency=%s writes=%s seconds=5\n' \
+            "$case_id" "$mode" "$nodes" "$concurrency" "$rate" "$latency" "$writes"
+
+        if MAELSTROM_BIN="$runner" KAFKA_MODE="$mode" ./lab test kafka \
+            --node-count "$nodes" --concurrency "$concurrency" --rate "$rate" \
+            --latency "$latency" --max-writes-per-key "$writes" --time-limit 5 \
+            9>&- >"$log_file" 2>&1; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+
+        result_dir=$(readlink -e "$store_dir/kafka/latest" 2>/dev/null || true)
+        if [ -z "$result_dir" ] || [ "$result_dir" = "$previous_result" ]; then
+            result_dir=-
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$case_id" "$mode" "$nodes" "$concurrency" "$rate" "$latency" "$writes" \
+            5 "$exit_code" "$result_dir" "$log_file" >>"$index"
+
+        if [ "$exit_code" -ne 0 ]; then
+            run_status=failed
+            printf 'FAIL %s/%s. Stopped. Log: %s\nDo not rerun the matrix.\n' "$case_id" "$mode" "$log_file" >&2
+            return 1
+        fi
+        printf 'PASS %s/%s: %s\n' "$case_id" "$mode" "$result_dir"
+    done
+}
+
+run_case S-A 2 4  1000 0 16
+run_case S-B 2 16 1000 0 16
+run_case S-C 2 32 2000 0 16
+run_case S-D 2 16 1000 5 16
+run_case S-E 2 16 1000 0 256
+run_case S-F 5 16 1000 0 16
+run_case S-G 5 32 2000 0 16
+run_case S-H 5 16 1000 5 256
+run_case S-I 2 32 4000 0 16
+run_case S-J 5 32 4000 0 16
+
+run_status=completed
+printf 'Finished ONE round. Index: %s\nDo not run a second round.\n' "$index"
