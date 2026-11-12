@@ -18,13 +18,29 @@ Kafka 已完成到 5b，使用 `lin-kv` 共享日志和消费进度；按 5b 参
 ./lab test kafka --node-count 2 --concurrency 2n --time-limit 20 --rate 1000
 ```
 
-## 单节点事务（6a）
+## 事务（6a–6c）
 
-当前已实现单节点事务，并预留版本化写集合；多节点复制尚未接入。6a 验收：
+事务在本地提交后回复客户端，后台向其他节点直接复制。每个目标节点有独立队列和发送协程，
+每批最多 64 笔，不主动等待凑满；超时或临时不可用时退避重试同一批次，收到 ACK 后再取下一批。
+每笔事务保留自己的版本和最终写集合，接收端按版本幂等合并。
+
+6a 单节点验收：
 
 ```sh
 ./lab test txn --node-count 1 --time-limit 20 --rate 1000 --concurrency 2n --consistency-models read-uncommitted --availability total
 ```
+
+6b、6c 多节点验收：
+
+```sh
+./lab test txn --node-count 2 --concurrency 2n --time-limit 20 --rate 1000 --consistency-models read-uncommitted --availability total --nemesis partition
+./lab test txn --node-count 2 --concurrency 2n --time-limit 20 --rate 1000 --consistency-models read-committed --availability total --nemesis partition
+```
+
+单笔复制版已通过实际网络分区下的 6b、6c。批量版最新 6c 运行（`20261112T155159.053+0800`）
+18,359 笔事务全部成功；但该次 `minority-third` 策略在两节点上未实际切断连接，不能作为
+批量版分区恢复性能的验证。固定批次重试、批次上限和重复／乱序处理已有单元测试覆盖。
+当前阶段不再追加性能矩阵或追求极限吞吐。
 
 ## Kafka 写入模式
 

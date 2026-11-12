@@ -39,3 +39,8 @@ data class ReplicatedTxn(
     val version: Version,
     val writes: Map<Long, Long>,
 )
+
+@Serializable
+data class ReplicateBody(
+    val transactions: List<ReplicatedTxn>,
+)
