@@ -18,6 +18,14 @@ Kafka 已完成到 5b，使用 `lin-kv` 共享日志和消费进度；按 5b 参
 ./lab test kafka --node-count 2 --concurrency 2n --time-limit 20 --rate 1000
 ```
 
+## 单节点事务（6a）
+
+当前已实现单节点事务，并预留版本化写集合；多节点复制尚未接入。6a 验收：
+
+```sh
+./lab test txn --node-count 1 --time-limit 20 --rate 1000 --concurrency 2n --consistency-models read-uncommitted --availability total
+```
+
 ## Kafka 写入模式
 
 `KAFKA_MODE` 选择 Kafka 的写入策略，未设置时默认 `batch`，沿用已有的队列批处理。

@@ -1,9 +1,8 @@
 package io.github.origincoding.gossipglomers.challenges.txn
 
-import kotlin.system.exitProcess
+import io.github.origincoding.gossipglomers.runtime.Runtime
 
-/** Stage 06: Totally-Available Transactions. Implement the node here. */
+/** Stage 06a: 单节点事务；多节点复制待接入。 */
 fun run(): Unit {
-    System.err.println("Stage 06 (txn) is not implemented yet.")
-    exitProcess(2)
+    Runtime().run { TxnNode(this).register() }
 }
