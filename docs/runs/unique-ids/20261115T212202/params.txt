@@ -1,0 +1,7 @@
+workload: unique-ids
+run-dir: store/unique-ids/20261115T212202.125+0800
+started: 20261115T212202
+command: lein run test -w unique-ids --bin /home/origin-coding/gossip-glomers-kotlin/build/install/gossip-glomers-kotlin/bin/gossip-glomers-kotlin --node-count 3 --time-limit 10 --concurrency 10 --rate 200 --time-limit 10 --log-stderr
+git: 51498c4
+jdk: openjdk version "25.0.5" 2026-10-20 LTS
+maelstrom: /home/origin-coding/tools/maelstrom-0.2.4/maelstrom

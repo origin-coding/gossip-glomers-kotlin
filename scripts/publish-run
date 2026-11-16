@@ -1,0 +1,75 @@
+#!/bin/sh
+# 把一次 Maelstrom 运行的判定归档到 docs/runs/，供博客引用。
+#
+# 用法：./scripts/publish-run <store 下的运行目录> [标签]
+# 例：  ./scripts/publish-run store/echo/20261114T154500.755+0800
+#
+# 只归档两样东西：results.edn（判定书）和 params.txt（参数与版本）。
+# store/ 是本地工作目录，已被 .gitignore 忽略；docs/runs/ 是要提交的证据。
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 2
+}
+
+[ "$#" -ge 1 ] || fail 'Usage: ./scripts/publish-run <store-run-dir> [label]'
+
+RUN_DIR=${1%/}
+[ -d "$RUN_DIR" ] || fail "Not a directory: $RUN_DIR"
+[ -f "$RUN_DIR/results.edn" ] || fail "No results.edn in $RUN_DIR"
+
+workload=$(basename "$(dirname "$RUN_DIR")")
+stamp=$(basename "$RUN_DIR" | cut -d. -f1)
+dest="docs/runs/$workload/$stamp"
+if [ "$#" -ge 2 ]; then
+    dest="$dest-$2"
+fi
+
+mkdir -p "$dest"
+cp "$RUN_DIR/results.edn" "$dest/results.edn"
+
+# jepsen.log 里 "Command line:" 后面换行，真正的命令在下一行。
+command_line=''
+if [ -f "$RUN_DIR/jepsen.log" ]; then
+    command_line=$(grep -A1 -m1 'Command line:' "$RUN_DIR/jepsen.log" | tail -n 1 | sed 's/^[[:space:]]*//' || true)
+fi
+
+git_head=$(git rev-parse --short HEAD)
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    git_note="$git_head (tracked files modified)"
+else
+    git_note=$git_head
+fi
+
+maelstrom_bin=''
+if [ -n "${MAELSTROM_BIN:-}" ]; then
+    maelstrom_bin=$MAELSTROM_BIN
+elif command -v maelstrom >/dev/null 2>&1; then
+    maelstrom_bin=$(command -v maelstrom)
+elif [ -x "$HOME/tools/maelstrom-0.2.4/maelstrom" ]; then
+    maelstrom_bin="$HOME/tools/maelstrom-0.2.4/maelstrom"
+fi
+if [ -n "$maelstrom_bin" ] && [ -e "$maelstrom_bin" ]; then
+    maelstrom_bin=$(readlink -f "$maelstrom_bin" 2>/dev/null || printf '%s' "$maelstrom_bin")
+fi
+
+{
+    printf 'workload: %s\n' "$workload"
+    printf 'run-dir: %s\n' "$RUN_DIR"
+    printf 'started: %s\n' "$stamp"
+    if [ -n "$command_line" ]; then
+        printf 'command: %s\n' "$command_line"
+    fi
+    printf 'git: %s\n' "$git_note"
+    printf 'jdk: %s\n' "$(java -version 2>&1 | head -n 1)"
+    if [ -n "$maelstrom_bin" ]; then
+        printf 'maelstrom: %s\n' "$maelstrom_bin"
+    fi
+} > "$dest/params.txt"
+
+printf '已归档: %s\n' "$dest"
+printf '文件: results.edn, params.txt\n'

@@ -1,0 +1,7 @@
+workload: echo
+run-dir: store/echo/20261114T154500.755+0800
+started: 20261114T154500
+command: lein run test -w echo --bin /home/origin-coding/gossip-glomers-kotlin/build/install/gossip-glomers-kotlin/bin/gossip-glomers-kotlin --node-count 1 --time-limit 10 --node-count 1 --time-limit 10 --log-stderr
+git: 51498c4
+jdk: openjdk version "25.0.5" 2026-10-20 LTS
+maelstrom: /home/origin-coding/tools/maelstrom-0.2.4/maelstrom

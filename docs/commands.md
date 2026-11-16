@@ -196,6 +196,18 @@ BROADCAST_TOPOLOGY=fanout BROADCAST_FANOUT=3 ./lab test broadcast --node-count 2
 ./gradlew test
 ```
 
+## 归档运行结果
+
+博客引用的每次运行都要归档，读者才能在仓库里核对数字：
+
+```sh
+./scripts/publish-run store/echo/20261114T154500.755+0800
+```
+
+第一个参数是 `store/` 下的运行目录，第二个参数可选，会加在目录名末尾，用于区分同一实验的不同参数组合。
+脚本只复制 `results.edn`，并从 `jepsen.log` 抓出原始命令行，再补上 git 提交、JDK 和 Maelstrom 版本，
+写到 `docs/runs/<workload>/<时间>/`。`store/` 仍在 `.gitignore` 里，归档的是判定书和参数，不是整次运行的流水。
+
 ## 查看结果
 
 ```sh
