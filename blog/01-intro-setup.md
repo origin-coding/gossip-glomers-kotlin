@@ -179,7 +179,7 @@ dependencies {
 
 你现在有的东西：一个能跑的平台、一条能复现的命令、一个能看结果的目录。剩下的全是业务代码。
 
-下一篇拆开 Echo：16 行怎么就能跑通一次请求，以及"唯一 ID"这道题里，"唯一"到底有几种。
+下一篇：[Echo 与唯一 ID：第一批业务代码](https://github.com/origin-coding/gossip-glomers-kotlin/blob/main/blog/02-echo-uniqueid.md)——拆开 16 行实现，讲清"唯一"的三档保证强度。
 
 ---
 

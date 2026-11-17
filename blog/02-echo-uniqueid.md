@@ -222,6 +222,8 @@ UUID v4 的保证属于档二：128 位里 6 位是版本和变体，剩下 **12
 
 ## 八、下一篇
 
+上一篇：[一个 JDK 跑起六个分布式挑战](https://github.com/origin-coding/gossip-glomers-kotlin/blob/main/blog/01-intro-setup.md)
+
 到这里你已经会写业务题了：写 DTO、注册 handler、让它回包。四层里后两层是运行时做的，你只写了前两层。
 
 但有两个问题还悬着：**handler 是可以挂起的，它等别人回话的时候谁在干活？两个 handler 同时在跑的时候，状态谁来护？**

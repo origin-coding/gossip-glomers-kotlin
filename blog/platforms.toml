@@ -1,0 +1,16 @@
+# 博客发布配置：两个平台的固定信息，由 scripts/publish-pack 读取。
+# 平台字数限制以后台校验为准，这里先按经验值填写，被拦了改这里即可。
+
+[juejin]
+name = "掘金"
+column = "Kotlin Gossip Glomers 分布式实验"
+tags = ["Kotlin", "分布式", "后端"]
+title_max = 100
+digest_max = 100
+
+[csdn]
+name = "CSDN"
+column = "Kotlin Gossip Glomers 分布式实验"
+tags = ["Kotlin", "分布式系统", "Maelstrom"]
+title_max = 100
+digest_max = 120

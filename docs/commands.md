@@ -208,6 +208,27 @@ BROADCAST_TOPOLOGY=fanout BROADCAST_FANOUT=3 ./lab test broadcast --node-count 2
 脚本只复制 `results.edn`，并从 `jepsen.log` 抓出原始命令行，再补上 git 提交、JDK 和 Maelstrom 版本，
 写到 `docs/runs/<workload>/<时间>/`。`store/` 仍在 `.gitignore` 里，归档的是判定书和参数，不是整次运行的流水。
 
+## 发布打包
+
+把博客整理成掘金 / CSDN 的发布包（去 H1、图片换占位符、生成摘要与清单）：
+
+```sh
+./scripts/publish-pack blog/02-echo-uniqueid.md
+```
+
+输出在 `build/publish/<slug>/`，已被 `.gitignore` 忽略：
+
+| 文件 | 内容 |
+| --- | --- |
+| `README.md` | 本篇发布清单（图片、摘要字数、标签、栏目、格式统计） |
+| `meta.md` | 标题、两版摘要、标签、栏目 |
+| `body.md` | 正文，已去一级标题，图片换成 `__IMG_NN__` 占位符 |
+| `images.md` | 图片上传顺序与替换对照表 |
+| `images/` | 需要上传的原图 |
+
+平台信息（栏目、标签、字数上限）写在 `blog/platforms.toml`，改一处两篇都跟着变。
+发布中遇到的问题记录在 [发布错误手册](publishing-errors.md)。
+
 ## 查看结果
 
 ```sh

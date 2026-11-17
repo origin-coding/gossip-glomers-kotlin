@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""把一篇博客打包成掘金 / CSDN 的发布包。
+
+用法：
+    ./scripts/publish-pack blog/02-echo-uniqueid.md
+    ./scripts/publish-pack blog/02-echo-uniqueid.md --out /tmp/pack
+
+输出目录（默认 build/publish/<slug>/）：
+    README.md    本篇发布清单
+    meta.md      标题 / 两版摘要 / 标签 / 栏目
+    body.md      正文（已去 H1，图片换成 __IMG_NN__ 占位符）
+    images.md    图片上传与替换对照表
+    images/      需要上传的原图
+
+只做确定性的整理，不调用任何平台接口。
+"""
+
+import argparse
+import re
+import shutil
+import sys
+import tomllib
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+CONFIG = REPO / "blog" / "platforms.toml"
+
+IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+INLINE_RE = re.compile(r"(\*\*|`)")
+
+
+def load_config():
+    if not CONFIG.is_file():
+        sys.exit(f"找不到配置文件：{CONFIG}")
+    with CONFIG.open("rb") as f:
+        return tomllib.load(f)
+
+
+def split_title(text):
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("# "):
+            return line[2:].strip(), "\n".join(lines[i + 1:]).lstrip("\n")
+    return "", text
+
+
+def normalize(body):
+    """统一空行、去掉行尾空格、保证代码块前后有空行。"""
+    lines = [line.rstrip() for line in body.splitlines()]
+    out = []
+    in_fence = False
+    for line in lines:
+        if line.startswith("```"):
+            if not in_fence:
+                if out and out[-1].strip():
+                    out.append("")
+                in_fence = True
+            else:
+                in_fence = False
+            out.append(line)
+            continue
+        if out and out[-1].startswith("```") and not in_fence and line.strip():
+            out.append("")
+        out.append(line)
+
+    collapsed = []
+    for line in out:
+        if line == "" and collapsed and collapsed[-1] == "":
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed).strip() + "\n"
+
+
+def plain(text):
+    """去掉行内 markdown 标记，用于摘要。"""
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = INLINE_RE.sub("", text)
+    return " ".join(text.split())
+
+
+def sentences(text):
+    return [s for s in re.split(r"(?<=[。！？])", text) if s.strip()]
+
+
+def clip(text, limit):
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    cut = head.rfind("。")
+    if cut >= limit // 3:
+        return head[: cut + 1]
+    return head + "…"
+
+
+def build_digest(body, limit):
+    """取开头两段，按整句累加到平台上限的 92%，让长短两个平台自动产生不同摘要。"""
+    paras = []
+    for para in re.split(r"\n\s*\n", body):
+        s = para.strip()
+        if not s or s.startswith(("#", ">", "|", "```", "![", "*", "-", "1.")):
+            continue
+        paras.append(plain(s))
+        if len(paras) >= 2:
+            break
+    pool = "".join(paras)
+    budget = int(limit * 0.97)
+    acc = ""
+    for s in sentences(pool):
+        if len(acc) + len(s) <= budget:
+            acc += s
+        else:
+            break
+    return acc or clip(pool, limit)
+
+
+def handle_images(body, md_dir, out_images, problems):
+    records = []
+    counter = {"n": 0}
+
+    def repl(match):
+        alt, src = match.group(1), match.group(2)
+        if src.startswith(("http://", "https://", "__IMG_")):
+            return match.group(0)
+        counter["n"] += 1
+        n = counter["n"]
+        token = f"__IMG_{n:02d}__"
+        source = (md_dir / src).resolve()
+        if not source.is_file():
+            problems.append(f"图片不存在：{src}")
+            return match.group(0)
+        stem = re.sub(r"^\d+[-_]", "", source.stem)
+        target = out_images / f"{n:02d}-{stem}{source.suffix}"
+        shutil.copyfile(source, target)
+        records.append(
+            {
+                "n": n,
+                "token": token,
+                "alt": alt,
+                "src": src,
+                "file": target.name,
+                "size": source.stat().st_size,
+            }
+        )
+        return f"![{alt}]({token})"
+
+    return IMG_RE.sub(repl, body), records
+
+
+def write_meta(path, title, digests, config, slug):
+    lines = [f"# {slug} 发布信息", "", "## 标题", "", title, ""]
+    for key in ("juejin", "csdn"):
+        p = config[key]
+        digest = digests[key]
+        lines += [
+            f"## {p['name']}",
+            "",
+            f"- 标题上限：{p['title_max']} 字（当前 {len(title)}）",
+            f"- 摘要（上限 {p['digest_max']}，当前 {len(digest)}）：",
+            "",
+            f"  {digest}",
+            "",
+            f"- 标签：{' / '.join(p['tags'])}",
+            f"- 栏目：{p['column']}",
+            "",
+        ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_images(path, records, problems):
+    lines = ["# 图片清单", "", "上传顺序与占位符一一对应，上传完把占位符替换成平台返回的地址。", ""]
+    if records:
+        lines += ["| # | 占位符 | 说明 | 文件 | 大小 |", "| --- | --- | --- | --- | --- |"]
+        for r in records:
+            kb = r["size"] / 1024
+            warn = " ⚠️" if kb > 1024 else ""
+            lines.append(
+                f"| {r['n']} | `{r['token']}` | {r['alt']} | `images/{r['file']}` | {kb:.0f} KB{warn} |"
+            )
+        lines += ["", f"共 {len(records)} 张。⚠️ 表示超过 1 MB，平台可能二次压缩。"]
+    else:
+        lines.append("本文没有需要上传的本地图片。")
+    if problems:
+        lines += ["", "## 问题", ""] + [f"- {p}" for p in problems]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_checklist(path, title, records, digests, config, stats, slug):
+    jj, cs = config["juejin"], config["csdn"]
+    lines = [
+        f"# 发布清单：{slug}",
+        "",
+        "## 内容",
+        "",
+        f"- [ ] 标题：{title}",
+        f"- [ ] 掘金摘要（≤{jj['digest_max']} 字，当前 {len(digests['juejin'])}）",
+        f"- [ ] CSDN 摘要（≤{cs['digest_max']} 字，当前 {len(digests['csdn'])}）",
+        f"- [ ] 标签：掘金 {' / '.join(jj['tags'])}；CSDN {' / '.join(cs['tags'])}",
+        f"- [ ] 栏目：掘金「{jj['column']}」；CSDN「{cs['column']}」",
+        "",
+        "## 图片",
+        "",
+    ]
+    if records:
+        lines.append(f"- [ ] 上传 {len(records)} 张图片，并替换以下占位符：")
+        for r in records:
+            lines.append(f"  - [ ] `{r['token']}` ← `images/{r['file']}`")
+    else:
+        lines.append("- [ ] 本文没有本地图片")
+
+    lines += [
+        "",
+        "## 格式",
+        "",
+        "- [ ] 正文已去掉 H1（标题只出现在平台标题栏）",
+        f"- [ ] 代码块 {stats['fences']} 个，语言标注齐全",
+        f"- [ ] 表格 {stats['tables']} 个，分隔行完整",
+        f"- [ ] 未处理的相对链接：{stats['relative_links']} 处（应为 0）",
+    ]
+    if stats["cn_only_blocks"]:
+        lines.append(
+            f"- [ ] 本文含 {stats['cn_only_blocks']} 处「仅中文版」块，英文版发布前需删除"
+        )
+
+    lines += [
+        "",
+        "## 发布后",
+        "",
+        "- [ ] 两平台互链：上一篇 / 下一篇",
+        "- [ ] 系列专栏已选中",
+        "- [ ] 打开页面复查：图片、代码块、表格、目录",
+        "",
+        "正文：`body.md`　元信息：`meta.md`　图片对照：`images.md`",
+        "错误处理见 `docs/publishing-errors.md`。",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="生成博客发布包")
+    ap.add_argument("post", help="博客 markdown 路径，例如 blog/02-echo-uniqueid.md")
+    ap.add_argument("--out", help="输出目录，默认 build/publish/<slug>")
+    args = ap.parse_args()
+
+    post = Path(args.post).resolve()
+    if not post.is_file():
+        sys.exit(f"找不到文章：{post}")
+
+    config = load_config()
+    raw = post.read_text(encoding="utf-8")
+    title, body = split_title(raw)
+    if not title:
+        sys.exit("没有找到一级标题（# 开头）")
+
+    slug = post.stem
+    out = Path(args.out).resolve() if args.out else REPO / "build" / "publish" / slug
+    out_images = out / "images"
+    out_images.mkdir(parents=True, exist_ok=True)
+
+    problems = []
+    body, records = handle_images(body, post.parent, out_images, problems)
+    body = normalize(body)
+
+    digests = {k: build_digest(body, config[k]["digest_max"]) for k in ("juejin", "csdn")}
+
+    fences = len(re.findall(r"^```", body, re.M)) // 2
+    tables = len(re.findall(r"^\| ---", body, re.M))
+    relative_links = len(
+        [m for m in re.findall(r"\[[^\]]*\]\(([^)]+)\)", body) if not m.startswith(("http", "#", "__IMG_"))]
+    )
+    cn_only = len(re.findall(r"仅中文版", body))
+
+    stats = {
+        "fences": fences,
+        "tables": tables,
+        "relative_links": relative_links,
+        "cn_only_blocks": cn_only,
+    }
+
+    (out / "body.md").write_text(body, encoding="utf-8")
+    write_meta(out / "meta.md", title, digests, config, slug)
+    write_images(out / "images.md", records, problems)
+    write_checklist(out / "README.md", title, records, digests, config, stats, slug)
+
+    print(f"发布包：{out}")
+    print(f"标题：{title}（{len(title)} 字）")
+    for key in ("juejin", "csdn"):
+        d = digests[key]
+        print(f"{config[key]['name']}摘要：{len(d)}/{config[key]['digest_max']} 字")
+    print(f"图片：{len(records)} 张待上传")
+    print(f"代码块：{fences}　表格：{tables}　相对链接：{relative_links}　仅中文版块：{cn_only}")
+    if problems:
+        for p in problems:
+            print(f"问题：{p}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
