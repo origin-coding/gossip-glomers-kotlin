@@ -8,9 +8,11 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
@@ -132,5 +134,24 @@ class NodeTest {
                 yield()
             }
         }
+    }
+
+    @Serializable
+    private data class DeltaBody(val delta: Long)
+
+    @Test
+    fun `state written across a suspension point loses an update`() = runBlocking {
+        val h = NodeHarness(this)
+        var total = 0L
+        h.node.on<DeltaBody, EmptyBody>("add") { request ->
+            val current = total
+            delay(10) // 挂起点：另一个 handler 可以在这之间跑完整段
+            total = current + request.body.delta
+            EmptyBody
+        }
+        h.node.acceptRequest(incoming("add", 1, buildJsonObject { put("delta", 1) }))
+        h.node.acceptRequest(incoming("add", 2, buildJsonObject { put("delta", 1) }))
+        delay(50) // 等两个 handler 都写完
+        assertEquals(1L, total) // 两次 +1，只剩一次
     }
 }

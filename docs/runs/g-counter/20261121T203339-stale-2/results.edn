@@ -1,0 +1,148 @@
+{:perf {:latency-graph {:valid? true},
+        :rate-graph {:valid? true},
+        :valid? true},
+ :timeline {:valid? true},
+ :exceptions {:valid? true,
+              :exceptions ({:count 4,
+                            :class clojure.lang.ExceptionInfo,
+                            :example #jepsen.history.Op{:index 35,
+                                                        :time 2949205736,
+                                                        :type :info,
+                                                        :process 1,
+                                                        :f :add,
+                                                        :value 2,
+                                                        :exception {:via [{:type clojure.lang.ExceptionInfo,
+                                                                           :message "throw+: {:type :rpc-error, :code 22, :name :precondition-failed, :definite? true, :body {:code 22, :text \"current value 10 is not 4\", :type \"error\", :msg_id 12, :in_reply_to 5}}",
+                                                                           :data {:type :rpc-error,
+                                                                                  :code 22,
+                                                                                  :name :precondition-failed,
+                                                                                  :definite? true,
+                                                                                  :body {:code 22,
+                                                                                         :text "current value 10 is not 4",
+                                                                                         :type "error",
+                                                                                         :msg_id 12,
+                                                                                         :in_reply_to 5}},
+                                                                           :at [slingshot.support$stack_trace
+                                                                                invoke
+                                                                                "support.clj"
+                                                                                201]}],
+                                                                    :trace [[slingshot.support$stack_trace
+                                                                             invoke
+                                                                             "support.clj"
+                                                                             201]
+                                                                            [maelstrom.client$throw_errors_BANG_
+                                                                             invokeStatic
+                                                                             "client.clj"
+                                                                             133]
+                                                                            [maelstrom.client$throw_errors_BANG_
+                                                                             invoke
+                                                                             "client.clj"
+                                                                             125]
+                                                                            [maelstrom.client$rpc_BANG_
+                                                                             invokeStatic
+                                                                             "client.clj"
+                                                                             150]
+                                                                            [maelstrom.client$rpc_BANG_
+                                                                             invoke
+                                                                             "client.clj"
+                                                                             140]
+                                                                            [maelstrom.workload.pn_counter$fn__20851$add_BANG___20852
+                                                                             invoke
+                                                                             "pn_counter.clj"
+                                                                             20]
+                                                                            [maelstrom.workload.pn_counter$fn__20851$add_BANG___20852
+                                                                             invoke
+                                                                             "pn_counter.clj"
+                                                                             20]
+                                                                            [maelstrom.workload.pn_counter$client$reify__20873
+                                                                             invoke_BANG_
+                                                                             "pn_counter.clj"
+                                                                             47]
+                                                                            [jepsen.client.Validate
+                                                                             invoke_BANG_
+                                                                             "client.clj"
+                                                                             87]
+                                                                            [jepsen.generator.interpreter.ClientWorker
+                                                                             invoke_BANG_
+                                                                             "interpreter.clj"
+                                                                             65]
+                                                                            [jepsen.generator.interpreter$spawn_worker$fn__13749$fn__13750
+                                                                             invoke
+                                                                             "interpreter.clj"
+                                                                             140]
+                                                                            [jepsen.generator.interpreter$spawn_worker$fn__13749
+                                                                             invoke
+                                                                             "interpreter.clj"
+                                                                             123]
+                                                                            [clojure.core$binding_conveyor_fn$fn__5842
+                                                                             invoke
+                                                                             "core.clj"
+                                                                             2047]
+                                                                            [clojure.lang.AFn
+                                                                             call
+                                                                             "AFn.java"
+                                                                             18]
+                                                                            [java.util.concurrent.FutureTask
+                                                                             run
+                                                                             "FutureTask.java"
+                                                                             328]
+                                                                            [java.util.concurrent.ThreadPoolExecutor
+                                                                             runWorker
+                                                                             "ThreadPoolExecutor.java"
+                                                                             1090]
+                                                                            [java.util.concurrent.ThreadPoolExecutor$Worker
+                                                                             run
+                                                                             "ThreadPoolExecutor.java"
+                                                                             614]
+                                                                            [java.lang.Thread
+                                                                             run
+                                                                             "Thread.java"
+                                                                             1474]],
+                                                                    :cause "throw+: {:type :rpc-error, :code 22, :name :precondition-failed, :definite? true, :body {:code 22, :text \"current value 10 is not 4\", :type \"error\", :msg_id 12, :in_reply_to 5}}",
+                                                                    :data {:type :rpc-error,
+                                                                           :code 22,
+                                                                           :name :precondition-failed,
+                                                                           :definite? true,
+                                                                           :body {:code 22,
+                                                                                  :text "current value 10 is not 4",
+                                                                                  :type "error",
+                                                                                  :msg_id 12,
+                                                                                  :in_reply_to 5}}},
+                                                        :error "indeterminate: throw+: {:type :rpc-error, :code 22, :name :precondition-failed, :definite? true, :body {:code 22, :text \"current value 10 is not 4\", :type \"error\", :msg_id 12, :in_reply_to 5}}"}})},
+ :stats {:valid? true,
+         :count 51,
+         :ok-count 47,
+         :fail-count 0,
+         :info-count 4,
+         :by-f {:add {:valid? true,
+                      :count 22,
+                      :ok-count 18,
+                      :fail-count 0,
+                      :info-count 4},
+                :read {:valid? true,
+                       :count 29,
+                       :ok-count 29,
+                       :fail-count 0,
+                       :info-count 0}}},
+ :availability {:valid? true, :ok-fraction 0.92156863},
+ :net {:all {:send-count 254,
+             :recv-count 254,
+             :msg-count 254,
+             :msgs-per-op 4.980392},
+       :clients {:send-count 108, :recv-count 108, :msg-count 108},
+       :servers {:send-count 146,
+                 :recv-count 146,
+                 :msg-count 146,
+                 :msgs-per-op 2.862745},
+       :valid? true},
+ :workload {:valid? false,
+            :errors (#jepsen.history.Op{:index 100,
+                                        :time 19830699790,
+                                        :type :ok,
+                                        :process 5,
+                                        :f :read,
+                                        :value 29,
+                                        :final? true}),
+            :final-reads (36 29 36),
+            :acceptable ([36 36] [38 45] [47 47])},
+ :valid? false}

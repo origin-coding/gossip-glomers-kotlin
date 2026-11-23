@@ -1,0 +1,7 @@
+workload: g-counter
+run-dir: store/g-counter/20261121T203312.599+0800
+started: 20261121T203312
+command: lein run test -w g-counter --bin /home/origin-coding/gossip-glomers-kotlin/build/install/gossip-glomers-kotlin/bin/gossip-glomers-kotlin --node-count 3 --time-limit 10 --log-stderr
+git: 7d39ebd (tracked files modified)
+jdk: openjdk version "25.0.5" 2026-10-20 LTS
+maelstrom: /home/origin-coding/tools/maelstrom-0.2.4/maelstrom
